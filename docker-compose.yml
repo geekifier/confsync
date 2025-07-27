@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  confsync:
+    build: .
+    container_name: confsync
+    restart: unless-stopped
+    environment:
+      # Required: Remote server URL
+      - CONFSYNC_URL=https://example.com/api/files
+      
+      # Optional: File pattern (default: .*)
+      - CONFSYNC_FILE_PATTERN=^.*\.y.*ml$
+      
+      # Optional: Polling interval (default: 60s)
+      - CONFSYNC_POLL_INTERVAL=30s
+      
+      # Optional: Local directory (default: ./sync)
+      - CONFSYNC_LOCAL_DIR=/app/sync
+      
+      # Optional: HTTP connection timeout (default: 10s)
+      - CONFSYNC_CONNECT_TIMEOUT=10s
+      
+      # Optional: Download timeout per file (default: 0s = unlimited)
+      - CONFSYNC_DOWNLOAD_TIMEOUT=0s
+      
+      # Optional: Max retries (default: 3)
+      - CONFSYNC_MAX_RETRIES=3
+      
+      # Optional: Retry delay (default: 5s)
+      - CONFSYNC_RETRY_DELAY=5s
+      
+      # Optional: Enable verbose logging (default: false)
+      - CONFSYNC_VERBOSE=true
+      
+      # Optional: User agent (default: confsync/1.0)
+      - CONFSYNC_USER_AGENT=confsync/1.0
+      
+      # Optional: Health check port (default: 8080, set to 0 to disable)
+      - CONFSYNC_HEALTH_PORT=8080
+    volumes:
+      # Mount local directory to persist synced files
+      - ./sync:/app/sync
+    ports:
+      # Expose health check endpoint
+      - "8080:8080"
