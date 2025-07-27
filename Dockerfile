@@ -18,20 +18,16 @@ FROM alpine:${ALPINE_VERSION}
 RUN apk --no-cache add ca-certificates tzdata wget
 RUN addgroup -S confsync && adduser -S confsync -G confsync
 
+USER confsync
 WORKDIR /app
 COPY --from=builder /app/confsync .
-RUN mkdir -p /app/sync && chown -R confsync:confsync /app
 
-USER confsync
-
-# Default sync directory and health check port
-VOLUME ["/app/sync"]
+VOLUME ["/config"]
 EXPOSE 8080
 
-# Health check using the built-in endpoint
+ENV CONFSYNC_LOCAL_DIR=/config
+
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
-# Default command
 ENTRYPOINT ["./confsync"]
-CMD ["-dir", "/app/sync"]
