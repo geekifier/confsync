@@ -1,0 +1,129 @@
+name: Docker Multi-Architecture Build and Push
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: "Docker image name (without registry)"
+        required: false
+        type: string
+        default: ${{ github.repository }}
+      platforms:
+        description: "Target platforms for multi-arch build"
+        required: false
+        type: string
+        default: "linux/amd64,linux/arm64"
+      push:
+        description: "Whether to push the image"
+        required: false
+        type: boolean
+        default: true
+      go-version:
+        description: "Go version for Docker build"
+        required: false
+        type: string
+        default: "1.24"
+      alpine-version:
+        description: "Alpine version for Docker build"
+        required: false
+        type: string
+        default: "3.22"
+      generate-sbom:
+        description: "Whether to generate SBOM"
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      GITHUB_TOKEN:
+        description: "GitHub token for GHCR authentication"
+        required: true
+    outputs:
+      image-digest:
+        description: "Multi-arch image digest"
+        value: ${{ jobs.docker.outputs.digest }}
+      image-metadata:
+        description: "Image metadata including tags"
+        value: ${{ jobs.docker.outputs.metadata }}
+      image-tags:
+        description: "Generated image tags"
+        value: ${{ jobs.docker.outputs.tags }}
+
+jobs:
+  docker:
+    name: Build Multi-Architecture Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      metadata: ${{ steps.build.outputs.metadata }}
+      tags: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            network=host
+
+      - name: Log in to GitHub Container Registry
+        if: inputs.push
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata and tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ inputs.image-name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=${{ github.event.repository.name }}
+            org.opencontainers.image.description=${{ github.event.repository.description }}
+            org.opencontainers.image.url=${{ github.event.repository.html_url }}
+            org.opencontainers.image.source=${{ github.event.repository.clone_url }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=${{ github.event.repository.license.spdx_id }}
+          flavor: |
+            latest=auto
+
+      - name: Build and push multi-architecture Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: ${{ inputs.platforms }}
+          push: ${{ inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GO_VERSION=${{ inputs.go-version }}
+            ALPINE_VERSION=${{ inputs.alpine-version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: ${{ inputs.generate-sbom }}
+
+      - name: Generate and attest SBOM
+        if: inputs.generate-sbom && inputs.push
+        uses: actions/attest-sbom@v1
+        with:
+          subject-name: ghcr.io/${{ inputs.image-name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: /tmp/sbom.spdx.json
+          push-to-registry: true

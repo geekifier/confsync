@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  # Test and validate code before release
+  test:
+    name: Test and Validate
+    uses: ./.github/workflows/build.yml
+    with:
+      go-version: "1.24"
+      run-tests: true
+      run-lint: true
+      upload-coverage: false
+
+  # Build and push multi-architecture Docker images
+  docker:
+    name: Build Multi-Architecture Docker Images
+    needs: test
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      push: true
+      go-version: "1.24"
+      alpine-version: "3.22"
+      generate-sbom: true
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

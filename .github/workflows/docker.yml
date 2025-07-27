@@ -1,0 +1,20 @@
+name: Docker Build
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    branches: [master]
+
+jobs:
+  docker:
+    name: Build and Push Docker Images
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      push: ${{ github.event_name != 'pull_request' }}
+      go-version: "1.24"
+      alpine-version: "3.22"
+      generate-sbom: ${{ github.event_name != 'pull_request' }}
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
