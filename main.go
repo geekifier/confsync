@@ -572,7 +572,7 @@ func (app *ConfsyncApp) Run() {
 func parseFlags() Config {
 	var config Config
 	
-	// Set defaults using reflection
+	// Set defaults and register flags using reflection
 	v := reflect.ValueOf(&config).Elem()
 	t := reflect.TypeOf(config)
 	
@@ -581,7 +581,6 @@ func parseFlags() Config {
 		fieldType := t.Field(i)
 		
 		flagName := fieldType.Tag.Get("flag")
-		envName := fieldType.Tag.Get("env")
 		defaultValue := fieldType.Tag.Get("default")
 		description := fieldType.Tag.Get("description")
 		
@@ -589,43 +588,90 @@ func parseFlags() Config {
 			continue
 		}
 		
-		// Get value from environment variable first, then use default
-		value := defaultValue
-		if envName != "" {
-			if envValue := os.Getenv(envName); envValue != "" {
-				value = envValue
-			}
-		}
-		
-		// Set the default value based on field type
+		// Register flags with default values based on field type
 		switch field.Kind() {
 		case reflect.String:
-			field.SetString(value)
-			flag.StringVar((*string)(field.Addr().UnsafePointer()), flagName, value, description)
+			field.SetString(defaultValue)
+			flag.StringVar((*string)(field.Addr().UnsafePointer()), flagName, defaultValue, description)
 			
 		case reflect.Int:
-			if intVal, err := strconv.Atoi(value); err == nil {
+			if intVal, err := strconv.Atoi(defaultValue); err == nil {
 				field.SetInt(int64(intVal))
+				flag.IntVar((*int)(field.Addr().UnsafePointer()), flagName, intVal, description)
 			}
-			flag.IntVar((*int)(field.Addr().UnsafePointer()), flagName, int(field.Int()), description)
 			
 		case reflect.Bool:
-			if boolVal, err := strconv.ParseBool(value); err == nil {
+			if boolVal, err := strconv.ParseBool(defaultValue); err == nil {
 				field.SetBool(boolVal)
+				flag.BoolVar((*bool)(field.Addr().UnsafePointer()), flagName, boolVal, description)
 			}
-			flag.BoolVar((*bool)(field.Addr().UnsafePointer()), flagName, field.Bool(), description)
 			
 		case reflect.TypeOf(time.Duration(0)).Kind():
 			if field.Type() == reflect.TypeOf(time.Duration(0)) {
-				if durVal, err := time.ParseDuration(value); err == nil {
+				if durVal, err := time.ParseDuration(defaultValue); err == nil {
 					field.Set(reflect.ValueOf(durVal))
+					flag.DurationVar((*time.Duration)(field.Addr().UnsafePointer()), flagName, durVal, description)
 				}
-				flag.DurationVar((*time.Duration)(field.Addr().UnsafePointer()), flagName, time.Duration(field.Int()), description)
 			}
 		}
 	}
 	
+	// Parse command line flags first
 	flag.Parse()
+	
+	// Build a set of explicitly provided flags from command line arguments
+	explicitFlags := make(map[string]bool)
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "-") {
+			flagName := strings.TrimLeft(arg, "-")
+			// Handle -flag=value format
+			if eqIndex := strings.Index(flagName, "="); eqIndex != -1 {
+				flagName = flagName[:eqIndex]
+			}
+			explicitFlags[flagName] = true
+		}
+	}
+	
+	// Override with environment variables if they exist (env vars take precedence over defaults but not over explicit flags)
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Field(i)
+		fieldType := t.Field(i)
+		
+		flagName := fieldType.Tag.Get("flag")
+		envName := fieldType.Tag.Get("env")
+		
+		if flagName == "" || envName == "" {
+			continue
+		}
+		
+		// Only override if flag was not explicitly set and env var exists
+		if !explicitFlags[flagName] && os.Getenv(envName) != "" {
+			envValue := os.Getenv(envName)
+			
+			switch field.Kind() {
+			case reflect.String:
+				field.SetString(envValue)
+				
+			case reflect.Int:
+				if intVal, err := strconv.Atoi(envValue); err == nil {
+					field.SetInt(int64(intVal))
+				}
+				
+			case reflect.Bool:
+				if boolVal, err := strconv.ParseBool(envValue); err == nil {
+					field.SetBool(boolVal)
+				}
+				
+			case reflect.TypeOf(time.Duration(0)).Kind():
+				if field.Type() == reflect.TypeOf(time.Duration(0)) {
+					if durVal, err := time.ParseDuration(envValue); err == nil {
+						field.Set(reflect.ValueOf(durVal))
+					}
+				}
+			}
+		}
+	}
+	
 	return config
 }
 
