@@ -111,6 +111,155 @@ When file deletion is enabled, the sync process:
 
 **WARNING**: When `-delete=true`, any files in the target directory that match the regex patterns, and do not exist on the remote server, WILL BE DELETED WITH EXTREME PREJUDICE.
 
+## Build & Development
+
+### Prerequisites
+
+- Go 1.21 or later
+- Docker (for container builds)
+- Docker Buildx (for multi-architecture builds)
+
+### Building
+
+#### Local Binary
+
+```bash
+# Build for current platform
+make build
+
+# Build for all supported platforms
+make build-all
+```
+
+#### Docker Images
+
+```bash
+# Build single-architecture image for local testing
+make docker-local
+
+# Build multi-architecture images (for CI/production)
+make docker
+
+# Build with GitHub Actions compatible caching
+make docker-multiarch
+
+# Build and push to GHCR.io with security attestations
+make docker-push-ghcr
+```
+
+#### Customizing Versions
+
+You can customize Go and Alpine versions used in Docker builds:
+
+```bash
+# Use custom versions for local build
+GO_VERSION=1.23 ALPINE_VERSION=3.21 make docker-local
+
+# Multi-arch with custom versions
+GO_VERSION=1.23 ALPINE_VERSION=3.21 make docker
+```
+
+### Development Workflow
+
+```bash
+# Format code
+make fmt
+
+# Run tests
+make test
+
+# Build and run locally
+make build
+./confsync -url https://example.com/files -dir ./sync
+
+# Run with Docker (builds local image first)
+make docker-run CONFSYNC_URL=https://example.com/files
+```
+
+### Multi-Architecture Support
+
+This project supports building Docker images for multiple architectures:
+
+- **linux/amd64** - Intel/AMD 64-bit
+- **linux/arm64** - ARM 64-bit (Apple Silicon, ARM servers)
+
+**How Multi-Arch Images Work:**
+
+Multi-architecture Docker images use a **manifest list** - a single tag that contains references to platform-specific images. When you run `docker run myimage:latest`, Docker automatically:
+
+1. Checks your platform (e.g., Apple Silicon = `linux/arm64`)
+2. Downloads the appropriate image variant from the manifest list
+3. Runs the correct architecture without `-amd64` or `-arm64` tag suffixes needed
+
+#### Local Multi-Arch Development
+
+For local development with multi-architecture builds:
+
+```bash
+# Build both architectures (stores in buildx cache, not local Docker)
+make docker
+
+# For local testing, use single-arch build instead
+make docker-local
+docker run --rm confsync:latest --help
+```
+
+**Note**: Multi-architecture images use a single tag (`confsync:latest`) containing a manifest list that points to platform-specific images. Docker automatically selects the correct architecture for your platform when you run the image. You don't need separate `-amd64` or `-arm64` tagged images.
+
+#### CI/CD Pipeline
+
+The project includes comprehensive GitHub Actions workflows:
+
+- **CI Pipeline** (`.github/workflows/ci.yml`):
+
+  - Go testing across multiple versions
+  - Multi-platform Docker builds
+  - Security scanning with CodeQL and Trivy
+  - Test coverage reporting
+  - Automated builds on PRs and pushes
+
+- **Docker Pipeline** (`.github/workflows/docker.yml`):
+
+  - Multi-architecture Docker image builds
+  - Automated tagging based on Git refs
+  - GHCR (GitHub Container Registry) publishing
+  - SBOM generation for security compliance
+
+- **Release Pipeline** (`.github/workflows/release.yml`):
+  - Automated releases on version tags
+  - Cross-platform binary builds
+  - Docker image publishing
+  - Changelog generation
+  - Release asset uploads
+
+#### Release Process
+
+1. Create and push a version tag:
+
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+
+2. GitHub Actions will automatically:
+   - Build binaries for all platforms
+   - Build and push multi-arch Docker images
+   - Create a GitHub release with changelog
+   - Upload release assets
+
+#### Available Make Targets
+
+Run `make help` for a complete list of available targets:
+
+- `build` - Build the binary for current platform
+- `build-all` - Build for multiple platforms
+- `test` - Run tests
+- `docker-local` - Build Docker image for local testing (current platform)
+- `docker` - Build multi-architecture Docker image
+- `docker-multiarch` - Build multi-arch with GitHub Actions compatible caching
+- `docker-push-ghcr` - Build and push multi-arch images to GHCR.io
+- `buildx-setup` / `buildx-cleanup` - Manage Docker buildx
+
 ## Health Endpoints
 
 When health checks are enabled (default port 8080), the following endpoints are available:

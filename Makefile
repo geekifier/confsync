@@ -2,10 +2,16 @@
 BINARY_NAME=confsync
 VERSION?=latest
 DOCKER_IMAGE=confsync:$(VERSION)
-GO_VERSION=1.21
+GHCR_IMAGE=ghcr.io/$(shell echo $(shell git config --get remote.origin.url) | sed 's/.*github\.com[:/]\([^/]*\/[^/]*\)\.git/\1/' | tr '[:upper:]' '[:lower:]')/confsync:$(VERSION)
+GO_VERSION=1.24
+ALPINE_VERSION=3.22
+PLATFORMS=linux/amd64,linux/arm64
+
+# Build arguments for Docker
+BUILD_ARGS=--build-arg GO_VERSION=$(GO_VERSION) --build-arg ALPINE_VERSION=$(ALPINE_VERSION)
 
 # Build targets
-.PHONY: build clean test run docker docker-run docker-compose help
+.PHONY: build clean test run docker docker-multiarch docker-push-ghcr help
 
 # Default target
 all: build
@@ -45,13 +51,77 @@ run: build
 	@echo "Running $(BINARY_NAME)..."
 	./$(BINARY_NAME)
 
-# Build Docker image
+# Build Docker image for local testing (current platform only)
+docker-local:
+	@echo "Building Docker image for local testing (current platform)..."
+	docker build \
+		$(BUILD_ARGS) \
+		--tag $(DOCKER_IMAGE) \
+		.
+	@echo "Local Docker image built with tag: $(DOCKER_IMAGE)"
+	@echo "To run locally:"
+	@echo "  docker run --rm $(DOCKER_IMAGE) --help"
+
+# Build Docker image (multi-architecture by default)
 docker:
-	@echo "Building Docker image $(DOCKER_IMAGE)..."
-	docker build -t $(DOCKER_IMAGE) .
+	@echo "Building multi-architecture Docker image..."
+	docker buildx create --name confsync-builder --use --bootstrap 2>/dev/null || docker buildx use confsync-builder
+	docker buildx build \
+		$(BUILD_ARGS) \
+		--platform $(PLATFORMS) \
+		--tag $(DOCKER_IMAGE) \
+		--cache-from type=local,src=/tmp/.buildx-cache \
+		--cache-to type=local,dest=/tmp/.buildx-cache,mode=max \
+		.
+	@echo "Multi-architecture image built with tag: $(DOCKER_IMAGE)"
+	@echo "Note: Multi-arch images are not loaded into local Docker daemon"
+	@echo "Use 'make docker-local' for local testing"
+
+# Build multi-architecture images for GHCR.io and push
+docker-push-ghcr:
+	@echo "Building and pushing multi-architecture images to GHCR.io..."
+	@echo "Image: $(GHCR_IMAGE)"
+	docker buildx create --name confsync-builder --use --bootstrap 2>/dev/null || docker buildx use confsync-builder
+	docker buildx build \
+		$(BUILD_ARGS) \
+		--platform $(PLATFORMS) \
+		--tag $(GHCR_IMAGE) \
+		--cache-from type=gha \
+		--cache-to type=gha,mode=max \
+		--provenance=true \
+		--sbom=true \
+		--push \
+		.
+	@echo "Multi-architecture image pushed to: $(GHCR_IMAGE)"
+
+# Build multi-architecture images locally (GitHub Actions style)
+docker-multiarch:
+	@echo "Building multi-architecture images locally (GitHub Actions compatible)..."
+	docker buildx create --name confsync-builder --use --bootstrap 2>/dev/null || docker buildx use confsync-builder
+	docker buildx build \
+		$(BUILD_ARGS) \
+		--platform $(PLATFORMS) \
+		--tag $(DOCKER_IMAGE) \
+		--cache-from type=gha \
+		--cache-to type=gha,mode=max \
+		--provenance=true \
+		--sbom=true \
+		.
+	@echo "Multi-architecture image built: $(DOCKER_IMAGE)"
+
+# Setup buildx builder
+buildx-setup:
+	@echo "Setting up Docker buildx for multi-architecture builds..."
+	docker buildx create --name confsync-builder --use --bootstrap || true
+	docker buildx inspect --bootstrap
+
+# Remove buildx builder
+buildx-cleanup:
+	@echo "Cleaning up buildx builder..."
+	docker buildx rm confsync-builder 2>/dev/null || true
 
 # Run with Docker
-docker-run: docker
+docker-run: docker-local
 	@echo "Running with Docker..."
 	docker run --rm -v $(PWD)/sync:/app/sync \
 		-e CONFSYNC_URL=$(CONFSYNC_URL) \
@@ -82,25 +152,43 @@ ready-check:
 # Show help
 help:
 	@echo "Available targets:"
-	@echo "  build          - Build the binary"
-	@echo "  build-all      - Build for multiple platforms"
-	@echo "  clean          - Clean build artifacts"
-	@echo "  test           - Run tests"
-	@echo "  fmt            - Format code"
-	@echo "  run            - Run the application"
-	@echo "  docker         - Build Docker image"
-	@echo "  docker-run     - Run with Docker"
-	@echo "  docker-compose - Start with Docker Compose"
-	@echo "  docker-compose-down - Stop Docker Compose"
-	@echo "  health-check   - Test health endpoint"
-	@echo "  ready-check    - Test readiness endpoint"
-	@echo "  help           - Show this help"
+	@echo "  build                - Build the binary for current platform"
+	@echo "  build-all            - Build for multiple platforms"
+	@echo "  clean                - Clean build artifacts"
+	@echo "  test                 - Run tests"
+	@echo "  fmt                  - Format code"
+	@echo "  run                  - Run the application"
+	@echo "  docker-local         - Build Docker image for local testing (current platform)"
+	@echo "  docker               - Build multi-architecture Docker image"
+	@echo "  docker-multiarch     - Build multi-arch with GitHub Actions compatible caching"
+	@echo "  docker-push-ghcr     - Build and push multi-arch images to GHCR.io"
+	@echo "  docker-run           - Run with Docker"
+	@echo "  docker-compose       - Start with Docker Compose"
+	@echo "  docker-compose-down  - Stop Docker Compose"
+	@echo "  buildx-setup         - Setup buildx for multi-arch builds"
+	@echo "  buildx-cleanup       - Remove buildx builder"
+	@echo "  health-check         - Test health endpoint"
+	@echo "  ready-check          - Test readiness endpoint"
+	@echo "  help                 - Show this help"
 	@echo ""
-	@echo "Environment variables for docker-run:"
-	@echo "  CONFSYNC_URL           - Remote server URL (required)"
-	@echo "  CONFSYNC_FILE_PATTERN  - File pattern regex (optional)"
+	@echo "Multi-Architecture Docker Builds:"
+	@echo "  This project focuses on multi-architecture builds supporting:"
+	@echo "  - linux/amd64 (x86_64)"
+	@echo "  - linux/arm64 (aarch64)"
+	@echo ""
+	@echo "GitHub Container Registry (GHCR.io) Integration:"
+	@echo "  - Automatic tagging with semantic versioning"
+	@echo "  - Supply chain security with provenance and SBOM"
+	@echo "  - Vulnerability scanning and attestations"
+	@echo ""
+	@echo "Environment variables:"
+	@echo "  VERSION              - Image version tag (default: latest)"
+	@echo "  GO_VERSION           - Go version for Docker build (default: 1.24)"
+	@echo "  ALPINE_VERSION       - Alpine version for Docker build (default: 3.22)"
+	@echo "  PLATFORMS            - Target platforms (default: linux/amd64,linux/arm64)"
 	@echo ""
 	@echo "Example usage:"
 	@echo "  make build"
-	@echo "  CONFSYNC_URL=https://example.com/files make run"
-	@echo "  CONFSYNC_URL=https://example.com/files CONFSYNC_FILE_PATTERN='^.*\.yaml$$' make docker-run"
+	@echo "  make docker                    # Build multi-arch locally"
+	@echo "  make docker-push-ghcr          # Push to GHCR.io"
+	@echo "  VERSION=v1.2.3 make docker     # Build with specific version"

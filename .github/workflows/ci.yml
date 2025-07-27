@@ -1,0 +1,17 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    uses: ./.github/workflows/build.yml
+    with:
+      go-version: "1.24"
+      run-tests: true
+      run-lint: true
+      upload-coverage: true

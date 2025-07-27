@@ -417,7 +417,9 @@ func (app *ConfsyncApp) healthHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
 	
-	json.NewEncoder(w).Encode(health)
+	if err := json.NewEncoder(w).Encode(health); err != nil {
+		log.Printf("Failed to encode health response: %v", err)
+	}
 }
 
 // readinessHandler handles readiness check requests
@@ -429,10 +431,12 @@ func (app *ConfsyncApp) readinessHandler(w http.ResponseWriter, r *http.Request)
 	req, err := http.NewRequestWithContext(ctx, "HEAD", app.config.RemoteURL, nil)
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{
+		if err := json.NewEncoder(w).Encode(map[string]string{
 			"status": "not ready",
 			"error":  "failed to create request",
-		})
+		}); err != nil {
+			log.Printf("Failed to encode readiness response: %v", err)
+		}
 		return
 	}
 	
@@ -441,19 +445,23 @@ func (app *ConfsyncApp) readinessHandler(w http.ResponseWriter, r *http.Request)
 	resp, err := app.listingClient.Do(req)
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{
+		if err := json.NewEncoder(w).Encode(map[string]string{
 			"status": "not ready",
 			"error":  "remote server unreachable",
-		})
+		}); err != nil {
+			log.Printf("Failed to encode readiness response: %v", err)
+		}
 		return
 	}
 	resp.Body.Close()
 	
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status": "ready",
-	})
+	}); err != nil {
+		log.Printf("Failed to encode readiness response: %v", err)
+	}
 }
 
 // startHealthServer starts the health check HTTP server
