@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -121,13 +122,13 @@ func TestConfigurationParsing(t *testing.T) {
 	// Create a temporary directory for testing
 	tmpDir := t.TempDir()
 	binaryPath := filepath.Join(tmpDir, "confsync-test")
-	
+
 	// Build the test binary
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("Failed to build test binary: %v", err)
 	}
-	
+
 	tests := []struct {
 		name        string
 		args        []string
@@ -189,31 +190,27 @@ func TestConfigurationParsing(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create command with timeout to prevent hanging
-			cmd := exec.Command(binaryPath, tt.args...)
+			// Use context with timeout to avoid race conditions
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			// Create command with context for timeout
+			cmd := exec.CommandContext(ctx, binaryPath, tt.args...)
 			cmd.Env = os.Environ()
-			
+
 			// Set test environment variables
 			for key, value := range tt.envVars {
 				cmd.Env = append(cmd.Env, key+"="+value)
 			}
-			
-			// Run command with timeout (it will fail after initial log output)
-			output, _ := func() ([]byte, error) {
-				timer := time.AfterFunc(2*time.Second, func() {
-					if cmd.Process != nil {
-						cmd.Process.Kill()
-					}
-				})
-				defer timer.Stop()
-				return cmd.CombinedOutput()
-			}()
-			
+
+			// Run command - will be cancelled by context timeout
+			output, _ := cmd.CombinedOutput()
+
 			outputStr := string(output)
-			
+
 			// Check if we got the expected logs before the timeout/error
 			if tt.checkLog != nil {
 				if err := tt.checkLog(outputStr); err != nil {

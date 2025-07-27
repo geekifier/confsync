@@ -111,7 +111,7 @@ func NewConfsyncApp(config Config) (*ConfsyncApp, error) {
 // fetchDirectoryListing fetches the directory listing from the remote server
 func (app *ConfsyncApp) fetchDirectoryListing() ([]FileEntry, error) {
 	atomic.AddInt64(&app.totalReqs, 1)
-	
+
 	var entries []FileEntry
 	var lastErr error
 
@@ -140,7 +140,11 @@ func (app *ConfsyncApp) fetchDirectoryListing() ([]FileEntry, error) {
 			continue
 		}
 
-		defer resp.Body.Close()
+		defer func() {
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				log.Printf("Failed to close response body: %v", closeErr)
+			}
+		}()
 
 		if resp.StatusCode != http.StatusOK {
 			lastErr = fmt.Errorf("server returned status %d: %s", resp.StatusCode, resp.Status)
@@ -168,7 +172,7 @@ func (app *ConfsyncApp) fetchDirectoryListing() ([]FileEntry, error) {
 // downloadFile downloads a file from the remote server with context-based cancellation
 func (app *ConfsyncApp) downloadFile(filename string) error {
 	fileURL := strings.TrimSuffix(app.config.RemoteURL, "/") + "/" + filename
-	
+
 	// Create download context with timeout if specified
 	ctx := app.downloadCtx
 	if app.config.DownloadTimeout > 0 {
@@ -176,7 +180,7 @@ func (app *ConfsyncApp) downloadFile(filename string) error {
 		ctx, cancel = context.WithTimeout(app.downloadCtx, app.config.DownloadTimeout)
 		defer cancel()
 	}
-	
+
 	req, err := http.NewRequestWithContext(ctx, "GET", fileURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request for %s: %w", filename, err)
@@ -194,7 +198,11 @@ func (app *ConfsyncApp) downloadFile(filename string) error {
 		}
 		return fmt.Errorf("failed to download %s: %w", filename, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("Failed to close response body: %v", closeErr)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to download %s: server returned status %d", filename, resp.StatusCode)
@@ -217,9 +225,13 @@ func (app *ConfsyncApp) downloadFile(filename string) error {
 
 	// Copy content to temporary file with context cancellation support
 	_, err = io.Copy(tempFile, resp.Body)
-	tempFile.Close()
+	if closeErr := tempFile.Close(); closeErr != nil {
+		log.Printf("Failed to close temporary file: %v", closeErr)
+	}
 	if err != nil {
-		os.Remove(tempPath)
+		if removeErr := os.Remove(tempPath); removeErr != nil {
+			log.Printf("Failed to remove temporary file %s: %v", tempPath, removeErr)
+		}
 		if ctx.Err() == context.Canceled {
 			return fmt.Errorf("download of %s was cancelled during file write", filename)
 		}
@@ -228,7 +240,9 @@ func (app *ConfsyncApp) downloadFile(filename string) error {
 
 	// Atomically move temporary file to final location
 	if err := os.Rename(tempPath, localPath); err != nil {
-		os.Remove(tempPath)
+		if removeErr := os.Remove(tempPath); removeErr != nil {
+			log.Printf("Failed to remove temporary file %s: %v", tempPath, removeErr)
+		}
 		return fmt.Errorf("failed to move temporary file to %s: %w", localPath, err)
 	}
 
@@ -243,10 +257,10 @@ func (app *ConfsyncApp) downloadFile(filename string) error {
 func (app *ConfsyncApp) syncFiles() error {
 	// Cancel any ongoing downloads from previous sync
 	app.downloadCancel()
-	
+
 	// Create new download context for this sync iteration
 	app.downloadCtx, app.downloadCancel = context.WithCancel(context.Background())
-	
+
 	entries, err := app.fetchDirectoryListing()
 	if err != nil {
 		return err
@@ -285,14 +299,14 @@ func (app *ConfsyncApp) syncFiles() error {
 				if entry.IsDir() {
 					continue
 				}
-				
+
 				filename := entry.Name()
-				
+
 				// Only consider files that match our pattern
 				if !app.fileRegex.MatchString(filename) {
 					continue
 				}
-				
+
 				// If file doesn't exist on remote, mark for removal
 				if _, exists := newCache[filename]; !exists {
 					filesToRemove = append(filesToRemove, filename)
@@ -344,7 +358,7 @@ func (app *ConfsyncApp) syncFiles() error {
 
 	// Log summary
 	if downloadedCount > 0 || removedCount > 0 {
-		log.Printf("Sync complete: downloaded %d, removed %d files matching pattern '%s'", 
+		log.Printf("Sync complete: downloaded %d, removed %d files matching pattern '%s'",
 			downloadedCount, removedCount, app.config.FilePattern)
 	} else if app.config.Verbose {
 		log.Printf("No changes detected")
@@ -404,9 +418,9 @@ func (app *ConfsyncApp) getHealthStatus() HealthStatus {
 // healthHandler handles health check requests
 func (app *ConfsyncApp) healthHandler(w http.ResponseWriter, r *http.Request) {
 	health := app.getHealthStatus()
-	
+
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	// Set HTTP status based on health
 	switch health.Status {
 	case "healthy":
@@ -416,7 +430,7 @@ func (app *ConfsyncApp) healthHandler(w http.ResponseWriter, r *http.Request) {
 	case "unhealthy":
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
-	
+
 	if err := json.NewEncoder(w).Encode(health); err != nil {
 		log.Printf("Failed to encode health response: %v", err)
 	}
@@ -427,7 +441,7 @@ func (app *ConfsyncApp) readinessHandler(w http.ResponseWriter, r *http.Request)
 	// Check if we can reach the remote URL
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	
+
 	req, err := http.NewRequestWithContext(ctx, "HEAD", app.config.RemoteURL, nil)
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -439,9 +453,9 @@ func (app *ConfsyncApp) readinessHandler(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
-	
+
 	req.Header.Set("User-Agent", app.config.UserAgent)
-	
+
 	resp, err := app.listingClient.Do(req)
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -453,8 +467,10 @@ func (app *ConfsyncApp) readinessHandler(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
-	resp.Body.Close()
-	
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		log.Printf("Failed to close response body: %v", closeErr)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string]string{
@@ -474,23 +490,33 @@ func (app *ConfsyncApp) startHealthServer() error {
 	mux.HandleFunc("/health", app.healthHandler)
 	mux.HandleFunc("/health/live", app.healthHandler)
 	mux.HandleFunc("/health/ready", app.readinessHandler)
-	
+
 	// Simple metrics endpoint
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		health := app.getHealthStatus()
 		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintf(w, "# HELP confsync_synced_files_total Total number of synced files\n")
-		fmt.Fprintf(w, "# TYPE confsync_synced_files_total counter\n")
-		fmt.Fprintf(w, "confsync_synced_files_total %d\n", health.SyncedFiles)
-		fmt.Fprintf(w, "# HELP confsync_requests_total Total number of requests to remote server\n")
-		fmt.Fprintf(w, "# TYPE confsync_requests_total counter\n")
-		fmt.Fprintf(w, "confsync_requests_total %d\n", health.TotalRequests)
-		fmt.Fprintf(w, "# HELP confsync_failed_syncs_total Total number of failed sync attempts\n")
-		fmt.Fprintf(w, "# TYPE confsync_failed_syncs_total counter\n")
-		fmt.Fprintf(w, "confsync_failed_syncs_total %d\n", health.FailedSyncs)
-		fmt.Fprintf(w, "# HELP confsync_uptime_seconds Uptime in seconds\n")
-		fmt.Fprintf(w, "# TYPE confsync_uptime_seconds gauge\n")
-		fmt.Fprintf(w, "confsync_uptime_seconds %f\n", health.Uptime.Seconds())
+
+		metrics := []string{
+			"# HELP confsync_synced_files_total Total number of synced files\n",
+			"# TYPE confsync_synced_files_total counter\n",
+			fmt.Sprintf("confsync_synced_files_total %d\n", health.SyncedFiles),
+			"# HELP confsync_requests_total Total number of requests to remote server\n",
+			"# TYPE confsync_requests_total counter\n",
+			fmt.Sprintf("confsync_requests_total %d\n", health.TotalRequests),
+			"# HELP confsync_failed_syncs_total Total number of failed sync attempts\n",
+			"# TYPE confsync_failed_syncs_total counter\n",
+			fmt.Sprintf("confsync_failed_syncs_total %d\n", health.FailedSyncs),
+			"# HELP confsync_uptime_seconds Uptime in seconds\n",
+			"# TYPE confsync_uptime_seconds gauge\n",
+			fmt.Sprintf("confsync_uptime_seconds %f\n", health.Uptime.Seconds()),
+		}
+
+		for _, metric := range metrics {
+			if _, err := fmt.Fprint(w, metric); err != nil {
+				log.Printf("Failed to write metric: %v", err)
+				return
+			}
+		}
 	})
 
 	app.healthServer = &http.Server{
@@ -549,10 +575,10 @@ func (app *ConfsyncApp) Run() {
 			}
 		case sig := <-sigChan:
 			log.Printf("Received signal %v, shutting down gracefully...", sig)
-			
+
 			// Cancel any ongoing downloads
 			app.downloadCancel()
-			
+
 			// Shutdown health server
 			if app.healthServer != nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -561,7 +587,7 @@ func (app *ConfsyncApp) Run() {
 					log.Printf("Health server shutdown error: %v", err)
 				}
 			}
-			
+
 			log.Printf("Shutdown complete")
 			return
 		}
@@ -571,41 +597,41 @@ func (app *ConfsyncApp) Run() {
 // parseFlags parses command line flags and environment variables using struct tags
 func parseFlags() Config {
 	var config Config
-	
+
 	// Set defaults and register flags using reflection
 	v := reflect.ValueOf(&config).Elem()
 	t := reflect.TypeOf(config)
-	
+
 	for i := 0; i < v.NumField(); i++ {
 		field := v.Field(i)
 		fieldType := t.Field(i)
-		
+
 		flagName := fieldType.Tag.Get("flag")
 		defaultValue := fieldType.Tag.Get("default")
 		description := fieldType.Tag.Get("description")
-		
+
 		if flagName == "" {
 			continue
 		}
-		
+
 		// Register flags with default values based on field type
 		switch field.Kind() {
 		case reflect.String:
 			field.SetString(defaultValue)
 			flag.StringVar((*string)(field.Addr().UnsafePointer()), flagName, defaultValue, description)
-			
+
 		case reflect.Int:
 			if intVal, err := strconv.Atoi(defaultValue); err == nil {
 				field.SetInt(int64(intVal))
 				flag.IntVar((*int)(field.Addr().UnsafePointer()), flagName, intVal, description)
 			}
-			
+
 		case reflect.Bool:
 			if boolVal, err := strconv.ParseBool(defaultValue); err == nil {
 				field.SetBool(boolVal)
 				flag.BoolVar((*bool)(field.Addr().UnsafePointer()), flagName, boolVal, description)
 			}
-			
+
 		case reflect.TypeOf(time.Duration(0)).Kind():
 			if field.Type() == reflect.TypeOf(time.Duration(0)) {
 				if durVal, err := time.ParseDuration(defaultValue); err == nil {
@@ -615,10 +641,10 @@ func parseFlags() Config {
 			}
 		}
 	}
-	
+
 	// Parse command line flags first
 	flag.Parse()
-	
+
 	// Build a set of explicitly provided flags from command line arguments
 	explicitFlags := make(map[string]bool)
 	for _, arg := range os.Args[1:] {
@@ -631,37 +657,37 @@ func parseFlags() Config {
 			explicitFlags[flagName] = true
 		}
 	}
-	
+
 	// Override with environment variables if they exist (env vars take precedence over defaults but not over explicit flags)
 	for i := 0; i < v.NumField(); i++ {
 		field := v.Field(i)
 		fieldType := t.Field(i)
-		
+
 		flagName := fieldType.Tag.Get("flag")
 		envName := fieldType.Tag.Get("env")
-		
+
 		if flagName == "" || envName == "" {
 			continue
 		}
-		
+
 		// Only override if flag was not explicitly set and env var exists
 		if !explicitFlags[flagName] && os.Getenv(envName) != "" {
 			envValue := os.Getenv(envName)
-			
+
 			switch field.Kind() {
 			case reflect.String:
 				field.SetString(envValue)
-				
+
 			case reflect.Int:
 				if intVal, err := strconv.Atoi(envValue); err == nil {
 					field.SetInt(int64(intVal))
 				}
-				
+
 			case reflect.Bool:
 				if boolVal, err := strconv.ParseBool(envValue); err == nil {
 					field.SetBool(boolVal)
 				}
-				
+
 			case reflect.TypeOf(time.Duration(0)).Kind():
 				if field.Type() == reflect.TypeOf(time.Duration(0)) {
 					if durVal, err := time.ParseDuration(envValue); err == nil {
@@ -671,7 +697,7 @@ func parseFlags() Config {
 			}
 		}
 	}
-	
+
 	return config
 }
 

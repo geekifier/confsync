@@ -46,6 +46,20 @@ fmt:
 	@echo "Formatting code..."
 	go fmt ./...
 
+# Run linter (requires golangci-lint to be installed)
+lint:
+	@echo "Running golangci-lint..."
+	golangci-lint run --timeout=5m
+
+# Fix linting issues automatically where possible
+lint-fix:
+	@echo "Running golangci-lint with --fix..."
+	golangci-lint run --fix --timeout=5m
+
+# Run all checks (format, lint, test) - use this before pushing
+check: fmt lint test
+	@echo "All checks passed! Ready to push."
+
 # Run the application (requires CONFSYNC_URL environment variable)
 run: build
 	@echo "Running $(BINARY_NAME)..."
@@ -157,6 +171,9 @@ help:
 	@echo "  clean                - Clean build artifacts"
 	@echo "  test                 - Run tests"
 	@echo "  fmt                  - Format code"
+	@echo "  lint                 - Run golangci-lint (requires golangci-lint installed)"
+	@echo "  lint-fix             - Run golangci-lint with --fix"
+	@echo "  check                - Run fmt, lint, and test (use before pushing)"
 	@echo "  run                  - Run the application"
 	@echo "  docker-local         - Build Docker image for local testing (current platform)"
 	@echo "  docker               - Build multi-architecture Docker image"
@@ -170,6 +187,11 @@ help:
 	@echo "  health-check         - Test health endpoint"
 	@echo "  ready-check          - Test readiness endpoint"
 	@echo "  help                 - Show this help"
+	@echo ""
+	@echo "Dependencies required:"
+	@echo "  - golangci-lint      - Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+	@echo "  - docker             - For container builds"
+	@echo "  - jq                 - For health check formatting (optional)"
 	@echo ""
 	@echo "Multi-Architecture Docker Builds:"
 	@echo "  This project focuses on multi-architecture builds supporting:"
