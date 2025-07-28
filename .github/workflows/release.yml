@@ -21,6 +21,11 @@ jobs:
   docker:
     name: Build Multi-Architecture Docker Images
     needs: test
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
     uses: ./.github/workflows/docker-build.yml
     with:
       push: true

@@ -17,6 +17,11 @@ on:
 jobs:
   docker:
     name: Build and Push Docker Images
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
     uses: ./.github/workflows/docker-build.yml
     with:
       push: ${{ inputs.push || github.event_name != 'pull_request' }}
