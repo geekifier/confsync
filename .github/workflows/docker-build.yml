@@ -115,12 +115,3 @@ jobs:
           cache-to: type=gha,mode=max
           provenance: true
           sbom: ${{ inputs.generate-sbom }}
-
-      - name: Generate and attest SBOM
-        if: inputs.generate-sbom && inputs.push
-        uses: actions/attest-sbom@v1
-        with:
-          subject-name: ghcr.io/${{ inputs.image-name }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          sbom-path: /tmp/sbom.spdx.json
-          push-to-registry: true
