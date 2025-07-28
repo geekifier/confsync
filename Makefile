@@ -143,26 +143,6 @@ docker-run: docker-local
 		-e CONFSYNC_VERBOSE=true \
 		$(DOCKER_IMAGE)
 
-# Run with Docker Compose
-docker-compose:
-	@echo "Starting with Docker Compose..."
-	docker-compose up --build
-
-# Stop Docker Compose
-docker-compose-down:
-	@echo "Stopping Docker Compose..."
-	docker-compose down
-
-# Test health endpoint (requires running application)
-health-check:
-	@echo "Checking health endpoint..."
-	curl -s http://localhost:8080/health | jq '.' || curl -s http://localhost:8080/health
-
-# Test readiness endpoint
-ready-check:
-	@echo "Checking readiness endpoint..."
-	curl -s http://localhost:8080/health/ready | jq '.' || curl -s http://localhost:8080/health/ready
-
 # Show help
 help:
 	@echo "Available targets:"
@@ -189,19 +169,9 @@ help:
 	@echo "  help                 - Show this help"
 	@echo ""
 	@echo "Dependencies required:"
-	@echo "  - golangci-lint      - Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
-	@echo "  - docker             - For container builds"
-	@echo "  - jq                 - For health check formatting (optional)"
-	@echo ""
-	@echo "Multi-Architecture Docker Builds:"
-	@echo "  This project focuses on multi-architecture builds supporting:"
-	@echo "  - linux/amd64 (x86_64)"
-	@echo "  - linux/arm64 (aarch64)"
-	@echo ""
-	@echo "GitHub Container Registry (GHCR.io) Integration:"
-	@echo "  - Automatic tagging with semantic versioning"
-	@echo "  - Supply chain security with provenance and SBOM"
-	@echo "  - Vulnerability scanning and attestations"
+	@echo "  - golangci-lint"
+	@echo "  - docker"
+	@echo "  - jq"
 	@echo ""
 	@echo "Environment variables:"
 	@echo "  VERSION              - Image version tag (default: latest)"

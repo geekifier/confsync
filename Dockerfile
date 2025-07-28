@@ -13,21 +13,25 @@ ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -a -installsuffix cgo -o confsync .
 
-# Final stage
+# Run Stage
+# This image runs as a non-root user
+
 FROM alpine:${ALPINE_VERSION}
+
 RUN apk --no-cache add ca-certificates tzdata wget
-RUN addgroup -S confsync && adduser -S confsync -G confsync
 
-USER confsync
-WORKDIR /app
-COPY --from=builder /app/confsync .
+USER nobody:nogroup
 
-VOLUME ["/config"]
+COPY --from=builder /app/confsync /app/confsync
+
+WORKDIR /confsync
+
+VOLUME ["/confsync"]
 EXPOSE 8080
 
-ENV CONFSYNC_LOCAL_DIR=/config
+ENV CONFSYNC_LOCAL_DIR=/confsync
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
-ENTRYPOINT ["./confsync"]
+CMD ["/app/confsync"]

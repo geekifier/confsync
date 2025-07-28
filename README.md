@@ -4,13 +4,26 @@ Simple utility for syncing files exposed by a remote web server into a local dir
 
 This program polls a remote web server that provides a directory listing in JSON format, monitors for changes, and syncs files matching a user-provided regex pattern.
 
+- [Use Cases](#use-cases)
+- [Features](#features)
+- [Directory Listing Format](#directory-listing-format)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Build \& Development](#build--development)
+- [Health Endpoints](#health-endpoints)
+- [Common Regex Patterns](#common-regex-patterns)
+- [Security Considerations](#security-considerations)
+- [Error Handling](#error-handling)
+- [Contributing](#contributing)
+- [License](#license)
+
 ## Use Cases
 
 ### Sync kubernetes-generated configuration to a remote host
 
-The original use case for this program was to sync Gatus monitoring configs (defined as ConfigMaps on a Kubernetes cluster) to a mounted Docker Volume, where the configs are consumed by [Gatus](https://github.com/TwiN/gatus). This way, the configs can be generated during the k8s gitops operations, but the actual monitoring happens off the cluster, near the users.
+The original use case for this program was to sync Gatus monitoring configs (defined as ConfigMaps on a Kubernetes cluster) to a mounted Docker Volume, where the configs are consumed by [gatus](https://github.com/TwiN/gatus). This way, the configs can be generated during the k8s gitops operations, but the actual monitoring happens off the cluster, closer to the end users.
 
-TODO: Link to an example docker-compose Gatus config here.
+Here's [an example](./examples/gatus.md) of that setup.
 
 ## Features
 
@@ -57,15 +70,54 @@ make build
 
 ### Using Docker
 
+When using bind mounts (`-v "/host/someDir:/containerPath"`), ensure that the target directory exists first.
+
 ```bash
-docker run -v $(pwd)/sync:/app/sync \
+# manual execution
+docker run -v $(pwd)/syncdir:/confsync \
   -e CONFSYNC_URL=https://example.com/api/files \
-  -e CONFSYNC_LOCAL_DIR=/app/sync \
   -e CONFSYNC_FILE_PATTERN="^.*\.y.*ml$" \
   confsync
 ```
 
-See also: [Docker Compose Example](#docker-compose)
+```yaml
+# docker-compose.yaml
+volumes:
+  gatus-configs:
+
+services:
+  confsync:
+    image: ghcr.io/geekifier/confsync:latest
+    container_name: confsync
+    environment:
+      CONFSYNC_URL: https://gatus.my.domain.tld/config/
+      CONFSYNC_FILE_PATTERN: '.*\.yaml'
+      CONFSYNC_DELETE: true
+    # Assign custom user id to the container
+    # This would normally be an user with write access to the gatus-configs volume
+    user: 1000:1000
+    volumes:
+      - gatus-configs:/confsync
+    ports:
+      - "8090:8080"
+    restart: unless-stopped
+  gatus:
+    image: twinproduction/gatus:latest
+    container_name: gatus
+    depends_on:
+      - confsync
+    environment:
+      GATUS_CONFIG_PATH: /config
+      GATUS_DELAY_START_SECONDS: 2
+    volumes:
+      - gatus-configs:/config
+    ports:
+      # expose gatus on port 8089 of the host
+      # if you are using a custom network and a reverse proxy, you don't need this
+      - "8089:8080"
+```
+
+More examples are in the [examples](./examples/) directory.
 
 ## Configuration
 
@@ -115,7 +167,7 @@ When file deletion is enabled, the sync process:
 
 ### Prerequisites
 
-- Go 1.21 or later
+- Go 1.24+
 - Docker (for container builds)
 - Docker Buildx (for multi-architecture builds)
 
@@ -311,16 +363,6 @@ Status values:
   -verbose
 ```
 
-#### Sync all files continuously (1 second interval)
-
-```bash
-./confsync \
-  -url https://files.example.com/listing \
-  -pattern ".*" \
-  -interval 1s \
-  -dir ./downloads
-```
-
 #### Using environment variables
 
 ```bash
@@ -331,39 +373,6 @@ export CONFSYNC_POLL_INTERVAL=15s
 export CONFSYNC_VERBOSE=true
 
 ./confsync
-```
-
-## Docker Examples
-
-### Basic Docker Run
-
-```bash
-docker run -d \
-  --name confsync \
-  -v /host/path/sync:/app/sync \
-  -e CONFSYNC_URL=https://example.com/api/files \
-  -e CONFSYNC_LOCAL_DIR=/app/sync \
-  -e CONFSYNC_FILE_PATTERN="^.*\.y.*ml$" \
-  -e CONFSYNC_POLL_INTERVAL=30s \
-  confsync
-```
-
-### Docker Compose
-
-```yaml
-version: "3.8"
-services:
-  confsync:
-    build: .
-    restart: unless-stopped
-    environment:
-      - CONFSYNC_URL=https://config.example.com/files
-      - CONFSYNC_LOCAL_DIR=/app/sync
-      - CONFSYNC_FILE_PATTERN=^.*\.ya?ml$
-      - CONFSYNC_POLL_INTERVAL=30s
-      - CONFSYNC_VERBOSE=true
-    volumes:
-      - ./config:/app/sync
 ```
 
 ## Common Regex Patterns
@@ -380,7 +389,7 @@ services:
 - The program runs as a non-root user in Docker containers
 - Files are downloaded to temporary locations first, then atomically moved
 - HTTP timeouts and retry limits prevent hanging connections
-- If URLs you supply contain credentials/sensitive info, they may be logged
+- If URLs you supply contain credentials/sensitive info, they may be logged, or exposed via metrics endpoints
 
 ## Error Handling
 
