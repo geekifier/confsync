@@ -27,5 +27,66 @@ jobs:
       go-version: "1.24"
       alpine-version: "3.22"
       generate-sbom: true
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build and upload release assets
+  release:
+    name: Build and Upload Release Assets
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go Environment
+        uses: ./.github/actions/setup-go
+        with:
+          go-version: "1.24"
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          # Create output directory
+          mkdir -p dist
+
+          # Set binary name with OS-specific extension
+          BINARY_NAME="confsync"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME="confsync.exe"
+          fi
+
+          # Build the binary
+          go build -ldflags="-s -w" -o "dist/${BINARY_NAME}" .
+
+          # Create archive
+          cd dist
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip "../confsync-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "${BINARY_NAME}"
+          else
+            tar -czf "../confsync-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "${BINARY_NAME}"
+          fi
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            confsync-${{ matrix.goos }}-${{ matrix.goarch }}.*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
